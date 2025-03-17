@@ -1,6 +1,19 @@
 const CLIENT_ID = "ef6b52550fc64ba2a4ad92a221911fa7"
 const CLIENT_SECRET = "9ed118dd4b41400eb647a41678a15312"
 
+// Update redirect URI to use the current host
+const REDIRECT_URI = typeof window !== 'undefined' 
+  ? `${window.location.origin}/api/spotify/callback`
+  : "http://localhost:3000/api/spotify/callback"
+
+// Scopes needed for track previews
+const SCOPES = [
+  "user-read-playback-state",
+  "user-modify-playback-state",
+  "user-read-email",
+  "user-read-private",
+].join(" ")
+
 // Individual artist IDs - include all artists to show all releases
 const ARTIST_IDS = [
   "53u06LkxIUGXSn3fCbwfau", // Bebe Cool
@@ -145,14 +158,90 @@ export async function getAccessToken() {
   }
 }
 
-// Function to handle API requests with rate limiting
-async function makeSpotifyRequest(url: string, retries = 5) {
+// Generate Spotify authorization URL
+export function getSpotifyAuthUrl() {
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: CLIENT_ID,
+    scope: SCOPES,
+    redirect_uri: REDIRECT_URI,
+    show_dialog: "true",
+  })
+  const url = `https://accounts.spotify.com/authorize?${params.toString()}`
+  console.log("Generated Spotify auth URL:", url)
+  return url
+}
+
+// Exchange authorization code for access token
+export async function getSpotifyUserToken(code: string) {
+  try {
+    const response = await fetch("https://accounts.spotify.com/api/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Authorization: `Basic ${Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString("base64")}`,
+      },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: REDIRECT_URI,
+      }),
+    })
+
+    if (!response.ok) {
+      throw new Error("Failed to get user token")
+    }
+
+    const data = await response.json()
+    return {
+      access_token: data.access_token,
+      refresh_token: data.refresh_token,
+      expires_in: data.expires_in,
+    }
+  } catch (error) {
+    console.error("Error getting user token:", error)
+    throw error
+  }
+}
+
+// Refresh user access token
+export async function refreshSpotifyUserToken(refreshToken: string) {
+  try {
+    const response = await fetch("https://accounts.spotify.com/api/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Authorization: `Basic ${Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString("base64")}`,
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+      }),
+    })
+
+    if (!response.ok) {
+      throw new Error("Failed to refresh token")
+    }
+
+    const data = await response.json()
+    return {
+      access_token: data.access_token,
+      expires_in: data.expires_in,
+    }
+  } catch (error) {
+    console.error("Error refreshing user token:", error)
+    throw error
+  }
+}
+
+// Update the makeSpotifyRequest function to handle user tokens
+async function makeSpotifyRequest(url: string, userToken?: string, retries = 5) {
   let attempts = 0
   let lastError: Error | null = null
 
   while (attempts < retries) {
     try {
-      const token = await getAccessToken()
+      const token = userToken || await getAccessToken()
 
       const response = await fetch(url, {
         headers: {
@@ -196,8 +285,8 @@ async function makeSpotifyRequest(url: string, retries = 5) {
 }
 
 // Queue-based version of makeSpotifyRequest
-async function queuedSpotifyRequest(url: string, retries = 5) {
-  return queueRequest(() => makeSpotifyRequest(url, retries))
+async function queuedSpotifyRequest(url: string, userToken?: string, retries = 5) {
+  return queueRequest(() => makeSpotifyRequest(url, userToken, retries))
 }
 
 export async function getArtistAlbums() {
@@ -346,7 +435,7 @@ export async function getFeaturedPlaylists() {
     // First try to get actual featured playlists
     try {
       const featuredData = await queuedSpotifyRequest(
-        `https://api.spotify.com/v1/browse/featured-playlists?country=UG&limit=10`,
+        `https://api.spotify.com/v1/browse/featured-playlists?limit=10`,
       )
 
       if (
@@ -374,7 +463,7 @@ export async function getFeaturedPlaylists() {
 
     // If featured playlists fail, try to get new releases
     try {
-      const data = await queuedSpotifyRequest(`https://api.spotify.com/v1/browse/new-releases?limit=10&country=UG`)
+      const data = await queuedSpotifyRequest(`https://api.spotify.com/v1/browse/new-releases?limit=10`)
 
       if (data && data.albums && data.albums.items && data.albums.items.length > 0) {
         console.log(`Successfully fetched ${data.albums.items.length} new releases from Spotify`)
@@ -397,7 +486,7 @@ export async function getFeaturedPlaylists() {
     // If new releases fail, try to get categories
     try {
       const categoriesData = await queuedSpotifyRequest(
-        `https://api.spotify.com/v1/browse/categories?limit=10&country=UG`,
+        `https://api.spotify.com/v1/browse/categories?limit=10`,
       )
 
       if (
@@ -432,8 +521,6 @@ export async function getFeaturedPlaylists() {
     return MOCK_PLAYLISTS
   }
 }
-
-// Add this new function to the spotify.ts file to fetch artist-specific playlists
 
 // Function to fetch playlists that feature our artists
 export async function getArtistPlaylists() {
@@ -500,7 +587,7 @@ export async function getArtistPlaylists() {
     // Also try to get featured playlists from Spotify
     try {
       const featuredData = await queuedSpotifyRequest(
-        `https://api.spotify.com/v1/browse/featured-playlists?country=UG&limit=10`,
+        `https://api.spotify.com/v1/browse/featured-playlists?limit=10`,
       )
 
       if (featuredData && featuredData.playlists && featuredData.playlists.items) {
@@ -529,4 +616,3 @@ export async function getArtistPlaylists() {
     return MOCK_PLAYLISTS
   }
 }
-
