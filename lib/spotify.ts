@@ -2,8 +2,8 @@ const CLIENT_ID = "ef6b52550fc64ba2a4ad92a221911fa7"
 const CLIENT_SECRET = "9ed118dd4b41400eb647a41678a15312"
 
 // Update redirect URI to use the current host
-const REDIRECT_URI = typeof window !== 'undefined' 
-  ? `${window.location.origin}/api/spotify/callback`
+const REDIRECT_URI = process.env.NODE_ENV === "production"
+  ? "https://rmusiq.com/api/spotify/callback"
   : "http://localhost:3000/api/spotify/callback"
 
 // Scopes needed for track previews
