@@ -3,7 +3,7 @@ const CLIENT_SECRET = "9ed118dd4b41400eb647a41678a15312"
 
 // Update redirect URI to use the current host
 const REDIRECT_URI = process.env.NODE_ENV === "production"
-  ? "https://rmusiq.com/api/spotify/callback"
+  ? "https://rmusiqpub-sklj3u.vercel.app/api/spotify/callback"
   : "http://localhost:3000/api/spotify/callback"
 
 // Scopes needed for track previews
