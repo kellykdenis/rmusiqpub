@@ -74,11 +74,30 @@ export async function fetchAllReleases() {
     return allNewReleases
   }
 
+  // Check if we have cached data in sessionStorage
+  if (typeof window !== "undefined") {
+    const cachedReleases = sessionStorage.getItem("allNewReleases")
+    if (cachedReleases) {
+      try {
+        const parsed = JSON.parse(cachedReleases)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          console.log(`Using ${parsed.length} cached releases from sessionStorage`)
+          allNewReleases.length = 0
+          allNewReleases.push(...parsed)
+          return allNewReleases
+        }
+      } catch (e) {
+        console.error("Error parsing cached releases:", e)
+      }
+    }
+  }
+
   // Set loading state and create promise
   isLoadingReleases = true
 
   releasesLoadPromise = new Promise<ReturnType<typeof convertToRelease>[]>(async (resolve, reject) => {
     try {
+      console.log("Fetching all releases from API...")
       const response = await fetch("/api/spotify/all", {
         cache: "no-store",
       })
@@ -101,11 +120,23 @@ export async function fetchAllReleases() {
       }
 
       const albums = await response.json()
+      console.log(`Received ${albums.length} albums from API`)
+
       const releases = albums.map(convertToRelease)
 
       // Update the global store
       allNewReleases.length = 0
       allNewReleases.push(...releases)
+
+      // Cache in sessionStorage for future use
+      if (typeof window !== "undefined") {
+        try {
+          sessionStorage.setItem("allNewReleases", JSON.stringify(releases))
+          console.log("Cached releases in sessionStorage")
+        } catch (e) {
+          console.error("Error caching releases:", e)
+        }
+      }
 
       resolve(releases)
     } catch (error) {

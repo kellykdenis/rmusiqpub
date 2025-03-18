@@ -7,96 +7,185 @@ import { Button } from "@/components/ui/button"
 import { Play, Pause, ExternalLink } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
 import { allThemedPlaylists } from "@/components/browse-themed-playlists"
+import { useToast } from "@/hooks/use-toast"
 
 interface PlaylistDetailsProps {
   slug: string
 }
 
-// Sample tracks data structure with working audio URLs
-const sampleTracks = [
-  {
-    id: "1",
-    title: "Get Me Started",
-    version: "Album",
-    artist: "Troye Sivan",
-    writer:
-      "Glass, Jack (Spacey); Christopher John; Sivan, Troye; Behr, Kaeryn; (Kirkpatrick, Ian Eric); (McLaughlin, Brett Leland); (Park, Tayla)",
-    charts: "",
-    preview_url: "https://samplelib.com/lib/preview/mp3/sample-3s.mp3",
-    external_url: "https://open.spotify.com/track/sample1",
-  },
-  {
-    id: "2",
-    title: "Asteroids",
-    version: "Single",
-    artist: "Rhapsody & Hit Boy",
-    writer: "Hollis, Chauncey A.; (Evans, Marianna); (Corbett, Dustin James)",
-    charts: "",
-    preview_url: "https://samplelib.com/lib/preview/mp3/sample-6s.mp3",
-    external_url: "https://open.spotify.com/track/sample2",
-  },
-  {
-    id: "3",
-    title: "Echoes of Tomorrow",
-    version: "Album",
-    artist: "The Cosmic Dreamers",
-    writer: "Johnson, Michael; Smith, Sarah",
-    charts: "",
-    preview_url: "https://samplelib.com/lib/preview/mp3/sample-9s.mp3",
-    external_url: "https://open.spotify.com/track/sample3",
-  },
-  {
-    id: "4",
-    title: "Neon Nights",
-    version: "Single",
-    artist: "Synthwave Collective",
-    writer: "Williams, David; Brown, Jessica",
-    charts: "",
-    preview_url: "https://samplelib.com/lib/preview/mp3/sample-12s.mp3",
-    external_url: "https://open.spotify.com/track/sample4",
-  },
-  {
-    id: "5",
-    title: "Whispers in the Wind",
-    version: "Album",
-    artist: "Aria Luna",
-    writer: "Garcia, Maria; Lopez, Carlos",
-    charts: "",
-    preview_url: "https://samplelib.com/lib/preview/mp3/sample-15s.mp3",
-    external_url: "https://open.spotify.com/track/sample5",
-  },
-]
-
 export function PlaylistDetails({ slug }: PlaylistDetailsProps) {
   const [loading, setLoading] = useState(true)
-  const [playlist, setPlaylist] = useState<(typeof allThemedPlaylists)[0] | null>(null)
-  const [tracks, setTracks] = useState(sampleTracks)
+  const [playlist, setPlaylist] = useState<any | null>(null)
+  const [tracks, setTracks] = useState<any[]>([])
   const [currentlyPlaying, setCurrentlyPlaying] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
-  const playTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const { toast } = useToast()
+
+  // Helper function to use fallback playlist data
+  const [fallbackPlaylist, setFallbackPlaylist] = useState({
+    id: "fallback",
+    name: "Sample Playlist",
+    description: "Sample playlist with our artists",
+    image: "/placeholder.svg",
+    slug: slug,
+    type: "Themed Playlist",
+    created: new Date().toISOString().split("T")[0],
+    totalTracks: 3,
+    owner: "RMPG",
+  })
+
+  // Helper function to use sample tracks
+  const [sampleTracks, setSampleTracks] = useState([
+    {
+      id: "sample1",
+      name: "Sample Track 1",
+      artists: "Bebe Cool",
+      preview_url: "https://samplelib.com/lib/preview/mp3/sample-3s.mp3",
+      album: {
+        name: "Sample Album",
+        images: [{ url: "/placeholder.svg", height: 300, width: 300 }],
+      },
+      external_urls: { spotify: "https://open.spotify.com/" },
+    },
+    {
+      id: "sample2",
+      name: "Sample Track 2",
+      artists: "Jhenell Dina",
+      preview_url: "https://samplelib.com/lib/preview/mp3/sample-6s.mp3",
+      album: {
+        name: "Sample Album",
+        images: [{ url: "/placeholder.svg", height: 300, width: 300 }],
+      },
+      external_urls: { spotify: "https://open.spotify.com/" },
+    },
+    {
+      id: "sample3",
+      name: "Sample Track 3",
+      artists: "Phila Kaweesa",
+      preview_url: "https://samplelib.com/lib/preview/mp3/sample-9s.mp3",
+      album: {
+        name: "Sample Album",
+        images: [{ url: "/placeholder.svg", height: 300, width: 300 }],
+      },
+      external_urls: { spotify: "https://open.spotify.com/" },
+    },
+  ])
 
   useEffect(() => {
-    // Simulate loading
-    setLoading(true)
+    // Update the fetchPlaylistDetails function to better handle errors
 
-    // Find the playlist by slug
-    const foundPlaylist = allThemedPlaylists.find((p) => p.slug === slug)
-    setPlaylist(foundPlaylist || null)
+    async function fetchPlaylistDetails() {
+      setLoading(true)
 
-    // Simulate API call delay
-    setTimeout(() => {
-      setLoading(false)
-    }, 500)
-  }, [slug])
+      // Check if this is a Spotify playlist
+      const isSpotifyPlaylist = slug.startsWith("spotify-")
 
-  // Handle audio playback
-  const handlePlay = (track: (typeof sampleTracks)[0]) => {
-    // Stop current playback if any
+      if (isSpotifyPlaylist) {
+        // Extract the Spotify playlist ID
+        const spotifyPlaylistId = slug.replace("spotify-", "")
+
+        try {
+          // Try to get from session storage first
+          const cachedPlaylists = sessionStorage.getItem("artistPlaylists")
+          if (cachedPlaylists) {
+            try {
+              const parsedPlaylists = JSON.parse(cachedPlaylists)
+              if (Array.isArray(parsedPlaylists) && parsedPlaylists.length > 0) {
+                const foundPlaylist = parsedPlaylists.find((p: any) => p.id === spotifyPlaylistId)
+
+                if (foundPlaylist) {
+                  console.log("Using cached playlist from session storage")
+                  setPlaylist({
+                    ...foundPlaylist,
+                    slug: slug,
+                    type: "Spotify Playlist",
+                    created: new Date().toISOString().split("T")[0],
+                    totalTracks: foundPlaylist.tracks?.length || 0,
+                  })
+
+                  setTracks(foundPlaylist.tracks || [])
+                  setLoading(false)
+                  return
+                }
+              }
+            } catch (parseError) {
+              console.error("Error parsing cached playlists:", parseError)
+              // Continue to fetch from API
+            }
+          }
+
+          // Fetch playlist details from our API
+          const response = await fetch(`/api/spotify/artist-playlists`)
+
+          // Always process the response, as our API now returns 200 with mock data on error
+          const allPlaylists = await response.json()
+          const foundPlaylist = allPlaylists.find((p: any) => p.id === spotifyPlaylistId)
+
+          if (foundPlaylist) {
+            setPlaylist({
+              ...foundPlaylist,
+              slug: slug,
+              type: "Spotify Playlist",
+              created: new Date().toISOString().split("T")[0],
+              totalTracks: foundPlaylist.tracks?.length || 0,
+            })
+
+            setTracks(foundPlaylist.tracks || [])
+          } else {
+            // Use fallback if playlist not found
+            console.log("Playlist not found in API response, using fallback")
+            setPlaylist(fallbackPlaylist)
+            setTracks(sampleTracks)
+          }
+        } catch (error) {
+          console.error("Error fetching Spotify playlist:", error)
+          toast({
+            title: "Error",
+            description: "Failed to load playlist details. Using fallback data.",
+            variant: "destructive",
+          })
+
+          // Use fallback when API call fails
+          setPlaylist(fallbackPlaylist)
+          setTracks(sampleTracks)
+        } finally {
+          setLoading(false)
+        }
+      } else {
+        // Find the playlist in our local data
+        const foundPlaylist = allThemedPlaylists.find((p) => p.slug === slug)
+
+        if (foundPlaylist) {
+          setPlaylist(foundPlaylist)
+
+          // For local playlists, we'll use sample tracks
+          setTracks(sampleTracks)
+        } else {
+          // If playlist not found in local data, use a fallback
+          setPlaylist(fallbackPlaylist)
+          setTracks(sampleTracks)
+        }
+
+        setLoading(false)
+      }
+    }
+
+    fetchPlaylistDetails()
+
+    // Cleanup function
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause()
+        audioRef.current.src = ""
+      }
+    }
+  }, [slug, toast, fallbackPlaylist, sampleTracks])
+
+  const handlePlay = (track: any) => {
+    // Stop current playback
     if (audioRef.current) {
       audioRef.current.pause()
-      if (playTimerRef.current) {
-        clearTimeout(playTimerRef.current)
-      }
+      audioRef.current.src = ""
     }
 
     // If clicking the same track that's playing, stop it
@@ -105,23 +194,33 @@ export function PlaylistDetails({ slug }: PlaylistDetailsProps) {
       return
     }
 
-    // Create new audio element with the sample URL
-    console.log("Playing audio:", track.preview_url)
+    // If no preview URL, show a message
+    if (!track.preview_url) {
+      toast({
+        title: "No preview available",
+        description: "This track doesn't have a preview available.",
+        variant: "destructive",
+      })
+      return
+    }
 
+    // Create and play new audio
     const audio = new Audio(track.preview_url)
     audioRef.current = audio
 
-    // Add event listeners for better user feedback
     audio.addEventListener("ended", () => {
       setCurrentlyPlaying(null)
     })
 
-    audio.addEventListener("error", (e) => {
-      console.error("Audio error:", e)
+    audio.addEventListener("error", () => {
+      toast({
+        title: "Playback Error",
+        description: "Failed to play this track. Please try another.",
+        variant: "destructive",
+      })
       setCurrentlyPlaying(null)
     })
 
-    // Play audio
     audio
       .play()
       .then(() => {
@@ -129,57 +228,44 @@ export function PlaylistDetails({ slug }: PlaylistDetailsProps) {
       })
       .catch((err) => {
         console.error("Error playing audio:", err)
-        setCurrentlyPlaying(null)
+        toast({
+          title: "Playback Error",
+          description: "Failed to play this track. Please try another.",
+          variant: "destructive",
+        })
       })
   }
-
-  // Play all tracks
-  const playAll = () => {
-    if (tracks.length === 0) return
-
-    // Start with the first track
-    handlePlay(tracks[0])
-  }
-
-  // Cleanup audio on unmount
-  useEffect(() => {
-    return () => {
-      if (audioRef.current) {
-        audioRef.current.pause()
-      }
-      if (playTimerRef.current) {
-        clearTimeout(playTimerRef.current)
-      }
-    }
-  }, [])
 
   if (loading) {
     return (
       <div className="max-w-[1180px] mx-auto px-4 py-8">
-        <h1 className="text-3xl font-bold mb-8">
-          <Skeleton className="h-8 w-64" />
-        </h1>
-        <div className="grid md:grid-cols-3 gap-8 mb-8">
-          <div className="space-y-6">
-            <div className="grid grid-cols-2 gap-2">
-              {[1, 2, 3, 4].map((i) => (
-                <Skeleton key={i} className="aspect-square w-full rounded-lg" />
-              ))}
-            </div>
-            <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-10 w-1/3 mb-8" />
+        <div className="grid md:grid-cols-3 gap-8">
+          <div>
+            <Skeleton className="aspect-square w-full rounded-lg mb-4" />
+            <Skeleton className="h-6 w-3/4 mb-2" />
+            <Skeleton className="h-4 w-1/2" />
           </div>
           <div className="md:col-span-2">
-            <div className="grid grid-cols-2 gap-x-8 gap-y-4">
-              {[1, 2, 3, 4, 5, 6].map((i) => (
-                <div key={i}>
-                  <Skeleton className="h-4 w-24 mb-2" />
-                  <Skeleton className="h-6 w-32" />
+            <Skeleton className="h-6 w-1/4 mb-4" />
+            <Skeleton className="h-4 w-full mb-2" />
+            <Skeleton className="h-4 w-full mb-2" />
+            <Skeleton className="h-4 w-3/4 mb-6" />
+
+            <Skeleton className="h-6 w-1/4 mb-4" />
+            <div className="space-y-4">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-4">
+                  <Skeleton className="h-12 w-12 rounded" />
+                  <div className="flex-1">
+                    <Skeleton className="h-4 w-3/4 mb-2" />
+                    <Skeleton className="h-3 w-1/2" />
+                  </div>
                 </div>
               ))}
             </div>
           </div>
         </div>
-        <Skeleton className="h-64 w-full" />
       </div>
     )
   }
@@ -190,7 +276,7 @@ export function PlaylistDetails({ slug }: PlaylistDetailsProps) {
         <h1 className="text-3xl font-bold mb-4">Playlist not found</h1>
         <p className="text-zinc-600">The requested playlist could not be found.</p>
         <Button variant="outline" className="mt-4" asChild>
-          <Link href="/browse-themed-playlists">Browse All Playlists</Link>
+          <Link href="/browse-featured-playlists">Browse All Playlists</Link>
         </Button>
       </div>
     )
@@ -200,86 +286,78 @@ export function PlaylistDetails({ slug }: PlaylistDetailsProps) {
     <div className="max-w-[1180px] mx-auto px-4 py-8">
       <h1 className="text-3xl font-bold mb-8">{playlist.name}</h1>
 
-      <div className="grid md:grid-cols-3 gap-8 mb-8">
-        <div className="space-y-6">
-          <div className="grid grid-cols-2 gap-2">
-            {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="relative aspect-square overflow-hidden rounded-lg">
-                <Image
-                  src={playlist.image || "/placeholder.svg"}
-                  alt={`Album artwork ${i}`}
-                  fill
-                  className="object-cover"
-                />
+      <div className="grid md:grid-cols-3 gap-8">
+        <div>
+          <div className="relative aspect-square overflow-hidden rounded-lg mb-4">
+            <Image src={playlist.image || "/placeholder.svg"} alt={playlist.name} fill className="object-cover" />
+          </div>
+          <h2 className="text-xl font-semibold mb-2">{playlist.name}</h2>
+          <p className="text-zinc-600 mb-4">{playlist.description}</p>
+
+          {playlist.external_url && (
+            <Button
+              variant="outline"
+              className="w-full flex items-center justify-center gap-2"
+              onClick={() => window.open(playlist.external_url, "_blank")}
+            >
+              Open in Spotify <ExternalLink className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+
+        <div className="md:col-span-2">
+          <div className="mb-6">
+            <h3 className="font-medium mb-2">Playlist Details</h3>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <span className="text-zinc-500">Type:</span> {playlist.type}
               </div>
-            ))}
-          </div>
-          <Button className="w-full bg-[#F50604] hover:bg-[#D50604] text-white" onClick={playAll}>
-            <Play className="w-4 h-4 mr-2" />
-            Play All
-          </Button>
-        </div>
-
-        <div className="md:col-span-2 space-y-4">
-          <div className="grid grid-cols-2 gap-x-8 gap-y-4">
-            <div>
-              <h3 className="font-medium text-sm text-zinc-500">Type</h3>
-              <p>{playlist.type}</p>
-            </div>
-            <div>
-              <h3 className="font-medium text-sm text-zinc-500">Folder</h3>
-              <p>Themed Playlists</p>
-            </div>
-            <div>
-              <h3 className="font-medium text-sm text-zinc-500">Created</h3>
-              <p>{playlist.created}</p>
-            </div>
-            <div>
-              <h3 className="font-medium text-sm text-zinc-500">Last Modified</h3>
-              <p>{playlist.created}</p>
-            </div>
-            <div>
-              <h3 className="font-medium text-sm text-zinc-500">Total Tracks</h3>
-              <p>{playlist.totalTracks}</p>
-            </div>
-            <div>
-              <h3 className="font-medium text-sm text-zinc-500">Owner</h3>
-              <p>{playlist.owner}</p>
+              <div>
+                <span className="text-zinc-500">Created:</span> {playlist.created}
+              </div>
+              <div>
+                <span className="text-zinc-500">Tracks:</span> {playlist.totalTracks || tracks.length}
+              </div>
+              <div>
+                <span className="text-zinc-500">Owner:</span> {playlist.owner}
+              </div>
             </div>
           </div>
-        </div>
-      </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b">
-              <th className="text-left py-2 px-4 w-8"></th>
-              <th className="text-left py-2 px-4">Title</th>
-              <th className="text-left py-2 px-4">Version</th>
-              <th className="text-left py-2 px-4">Artist</th>
-              <th className="text-left py-2 px-4">Writer</th>
-              <th className="text-left py-2 px-4">Charts</th>
-              <th className="text-left py-2 px-4 w-8"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {tracks.map((track) => (
-              <tr key={track.id} className="border-b hover:bg-gray-50">
-                <td className="py-2 px-4">
-                  <button onClick={() => handlePlay(track)} className="text-zinc-400 hover:text-[#F50604]">
-                    {currentlyPlaying === track.id ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                  </button>
-                </td>
-                <td className="py-2 px-4">{track.title}</td>
-                <td className="py-2 px-4">{track.version}</td>
-                <td className="py-2 px-4">{track.artist}</td>
-                <td className="py-2 px-4">{track.writer}</td>
-                <td className="py-2 px-4">{track.charts}</td>
-                <td className="py-2 px-4">
-                  {track.external_url && (
+          <h3 className="font-medium mb-4">Tracks</h3>
+          {tracks.length === 0 ? (
+            <p className="text-zinc-500">No tracks available for this playlist.</p>
+          ) : (
+            <div className="space-y-4">
+              {tracks.map((track: any) => (
+                <div key={track.id} className="flex items-center gap-4 group">
+                  <div className="relative w-12 h-12 flex-shrink-0">
+                    <Image
+                      src={track.album?.images?.[0]?.url || "/placeholder.svg"}
+                      alt={track.name}
+                      fill
+                      className="object-cover rounded"
+                    />
+                    <button
+                      onClick={() => handlePlay(track)}
+                      className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity"
+                      title={track.preview_url ? "Play preview" : "No preview available"}
+                      disabled={!track.preview_url}
+                    >
+                      {currentlyPlaying === track.id ? (
+                        <Pause className="w-6 h-6 text-white" />
+                      ) : (
+                        <Play className={`w-6 h-6 text-white ${!track.preview_url ? "opacity-50" : ""}`} />
+                      )}
+                    </button>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h4 className="font-medium truncate">{track.name}</h4>
+                    <p className="text-sm text-zinc-600 truncate">{track.artists}</p>
+                  </div>
+                  {track.external_urls?.spotify && (
                     <a
-                      href={track.external_url}
+                      href={track.external_urls.spotify}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-zinc-400 hover:text-[#1DB954]"
@@ -287,11 +365,11 @@ export function PlaylistDetails({ slug }: PlaylistDetailsProps) {
                       <ExternalLink className="w-4 h-4" />
                     </a>
                   )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

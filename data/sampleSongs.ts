@@ -3,38 +3,22 @@ export interface Song {
   title: string
   artist: string
   audioUrl: string
+  external_urls?: {
+    spotify?: string
+  }
+  album?: {
+    name?: string
+    images?: Array<{ url: string; height: number; width: number }>
+  }
 }
 
+// This will be populated dynamically from the Spotify API
 export const sampleSongs: Song[] = [
   {
     id: "1",
-    title: "Echoes of Tomorrow",
-    artist: "The Cosmic Dreamers",
-    audioUrl: "https://samplelib.com/lib/preview/mp3/sample-3s.mp3",
-  },
-  {
-    id: "2",
-    title: "Neon Nights",
-    artist: "Synthwave Collective",
-    audioUrl: "https://samplelib.com/lib/preview/mp3/sample-6s.mp3",
-  },
-  {
-    id: "3",
-    title: "Whispers in the Wind",
-    artist: "Aria Luna",
-    audioUrl: "https://samplelib.com/lib/preview/mp3/sample-9s.mp3",
-  },
-  {
-    id: "4",
-    title: "Urban Pulse",
-    artist: "Metro Beats",
-    audioUrl: "https://samplelib.com/lib/preview/mp3/sample-12s.mp3",
-  },
-  {
-    id: "5",
-    title: "Quantum Harmony",
-    artist: "The Physics",
-    audioUrl: "https://samplelib.com/lib/preview/mp3/sample-15s.mp3",
+    title: "Loading...",
+    artist: "Please wait",
+    audioUrl: "",
   },
 ]
 

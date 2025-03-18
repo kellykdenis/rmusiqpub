@@ -15,13 +15,28 @@ export async function fetchTrackPreview(trackName: string, artistName?: string) 
     })
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch preview: ${response.status} ${response.statusText}`)
+      console.error(`Failed to fetch preview: ${response.status} ${response.statusText}`)
+      return {
+        name: trackName,
+        preview_url: null,
+        external_url: null,
+        artists: artistName ? [artistName] : [],
+        album: "Unknown Album",
+        image: null,
+      }
     }
 
     return await response.json()
   } catch (error) {
     console.error("Error fetching track preview:", error)
-    return null
+    return {
+      name: trackName,
+      preview_url: null,
+      external_url: null,
+      artists: artistName ? [artistName] : [],
+      album: "Unknown Album",
+      image: null,
+    }
   }
 }
 
@@ -37,13 +52,28 @@ export async function fetchTrackPreviewById(trackId: string) {
     })
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch preview: ${response.status} ${response.statusText}`)
+      console.error(`Failed to fetch preview: ${response.status} ${response.statusText}`)
+      return {
+        name: "Unknown Track",
+        preview_url: null,
+        external_url: null,
+        artists: [],
+        album: "Unknown Album",
+        image: null,
+      }
     }
 
     return await response.json()
   } catch (error) {
     console.error("Error fetching track preview by ID:", error)
-    return null
+    return {
+      name: "Unknown Track",
+      preview_url: null,
+      external_url: null,
+      artists: [],
+      album: "Unknown Album",
+      image: null,
+    }
   }
 }
 

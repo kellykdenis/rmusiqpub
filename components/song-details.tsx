@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { ShoppingCart, Play, Pause, ExternalLink } from "lucide-react"
@@ -82,6 +82,7 @@ export function SongDetails({ slug }: SongDetailsProps) {
   const { toast } = useToast()
   const { isSpotifyAvailable } = useSpotify()
   const [previewsLoaded, setPreviewsLoaded] = useState(false)
+  const audioRef = useRef<HTMLAudioElement>(null)
 
   // Find the release by matching the slug
   const release = allNewReleases.find((r) => {
@@ -141,19 +142,25 @@ export function SongDetails({ slug }: SongDetailsProps) {
         try {
           const trackId = extractTrackId(track.external_urls.spotify)
           if (trackId) {
-            const previewData = await fetchTrackPreviewById(trackId)
-            if (previewData && previewData.preview_url) {
-              const index = updatedTracks.findIndex((t) => t.id === track.id)
-              if (index !== -1) {
-                updatedTracks[index] = {
-                  ...updatedTracks[index],
-                  preview_url: previewData.preview_url,
+            try {
+              const previewData = await fetchTrackPreviewById(trackId)
+              if (previewData && previewData.preview_url) {
+                const index = updatedTracks.findIndex((t) => t.id === track.id)
+                if (index !== -1) {
+                  updatedTracks[index] = {
+                    ...updatedTracks[index],
+                    preview_url: previewData.preview_url,
+                  }
                 }
               }
+            } catch (previewError) {
+              console.error(`Error fetching preview for track ${track.name}:`, previewError)
+              // Continue with next track
             }
           }
         } catch (error) {
-          console.error(`Error fetching preview for track ${track.name}:`, error)
+          console.error(`Error processing track ${track.name}:`, error)
+          // Continue with next track
         }
       }
 
@@ -168,7 +175,10 @@ export function SongDetails({ slug }: SongDetailsProps) {
       setPreviewsLoaded(true)
     }
 
-    fetchPreviewUrls()
+    fetchPreviewUrls().catch((error) => {
+      console.error("Error in fetchPreviewUrls:", error)
+      setPreviewsLoaded(true) // Mark as loaded even on error to prevent infinite retries
+    })
   }, [albumDetails, previewsLoaded])
 
   // Handle play with Spotify API
@@ -194,6 +204,7 @@ export function SongDetails({ slug }: SongDetailsProps) {
     // Try to play with Spotify API
     if (track.external_urls?.spotify) {
       const trackUri = track.external_urls.spotify.replace("https://open.spotify.com/track/", "spotify:track:")
+      console.log(`Attempting to play track: ${trackUri} - ${track.name}`)
 
       // Check if we have a Spotify token before trying to play
       const hasToken = localStorage.getItem("spotify_access_token")
@@ -210,6 +221,7 @@ export function SongDetails({ slug }: SongDetailsProps) {
       })
         .then(async (response) => {
           if (response.ok) {
+            console.log(`Successfully playing ${track.name} with Spotify`)
             setIsPlaying(true)
             toast({
               title: "Playing on Spotify",
@@ -251,6 +263,7 @@ export function SongDetails({ slug }: SongDetailsProps) {
         })
     } else {
       // No Spotify URL, use preview URL directly
+      console.log(`No Spotify URL available for ${track.name}, using preview URL directly`)
       setIsPlaying(true)
     }
   }

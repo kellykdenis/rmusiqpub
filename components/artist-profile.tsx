@@ -7,11 +7,10 @@ import { Button } from "@/components/ui/button"
 import { Facebook, Twitter, Instagram, Youtube, AirplayIcon as Spotify, ExternalLink, Play, Pause } from "lucide-react"
 import { artists } from "@/components/artists-grid"
 import { allThemedPlaylists } from "@/components/browse-themed-playlists"
-import { fetchAllReleases, getArtistReleases, getPopularSongs } from "@/components/browse-new-releases"
+import { fetchAllReleases, getArtistReleases } from "@/components/browse-new-releases"
 import { Skeleton } from "@/components/ui/skeleton"
-
-// Artist navigation letters for the filter
-const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("")
+import { useSpotify } from "@/contexts/spotify-context"
+import { useToast } from "@/hooks/use-toast"
 
 // Sample audio URLs for testing
 const sampleAudioUrls = [
@@ -24,6 +23,22 @@ const sampleAudioUrls = [
 
 interface ArtistProfileProps {
   slug: string
+}
+
+interface SpotifyTrack {
+  id: string
+  name: string
+  album: {
+    images: Array<{ url: string; height: number; width: number }>
+    name: string
+    release_date: string
+  }
+  artists: Array<{ name: string }>
+  preview_url: string | null
+  external_urls: {
+    spotify: string
+  }
+  duration_ms: number
 }
 
 interface ArtistSong {
@@ -50,6 +65,7 @@ interface ArtistRelease {
 export function ArtistProfile({ slug }: ArtistProfileProps) {
   const artist = artists.find((a) => a.slug === slug)
   const [popularSongs, setPopularSongs] = useState<ArtistSong[]>([])
+  const [spotifyTopTracks, setSpotifyTopTracks] = useState<SpotifyTrack[]>([])
   const [artistReleases, setArtistReleases] = useState<ArtistRelease[]>([])
   const [artistPlaylists, setArtistPlaylists] = useState<typeof allThemedPlaylists>([])
   const [spotifyPlaylists, setSpotifyPlaylists] = useState<any[]>([])
@@ -61,25 +77,54 @@ export function ArtistProfile({ slug }: ArtistProfileProps) {
   const playTimerRef = useRef<NodeJS.Timeout | null>(null)
   const initialReleasesToShow = 8
 
+  const { playTrack, pausePlayback, isPlaying: spotifyIsPlaying, currentTrackId } = useSpotify()
+  const { toast } = useToast()
+
   useEffect(() => {
     async function loadArtistContent() {
       if (!artist) return
 
       try {
         setLoading(true)
+
+        // Fetch top tracks from Spotify if we have a Spotify ID
+        if (artist.spotifyId) {
+          try {
+            console.log(`Fetching top tracks for artist: ${artist.name} with ID: ${artist.spotifyId}`)
+            const response = await fetch(`/api/spotify/artists/${artist.spotifyId}/top-tracks`)
+            if (response.ok) {
+              const data = await response.json()
+              if (data && data.tracks && Array.isArray(data.tracks)) {
+                setSpotifyTopTracks(data.tracks)
+
+                // Convert Spotify tracks to our format
+                const formattedTracks = data.tracks.map((track: SpotifyTrack) => ({
+                  id: track.id,
+                  title: track.name,
+                  artist: track.artists[0]?.name || artist.name,
+                  image: track.album.images[0]?.url || "/placeholder.svg",
+                  slug: `${track.id}-${track.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+                  preview_url: track.preview_url,
+                  external_url: track.external_urls.spotify,
+                  duration_ms: track.duration_ms,
+                }))
+
+                setPopularSongs(formattedTracks)
+              }
+            }
+          } catch (err) {
+            console.error(`Error fetching Spotify top tracks for ${artist.name}:`, err)
+          }
+        }
+
         await fetchAllReleases()
 
-        // Get 6 popular songs
-        const songs = getPopularSongs(artist.name, 6)
-
-        // Keep the actual Spotify preview URLs
-        setPopularSongs(songs)
-
-        // Get ALL releases for this artist
+        // Get releases ONLY for THIS artist by exact name match
+        console.log(`Getting releases for artist: ${artist.name}`)
         const releases = getArtistReleases(artist.name)
         setArtistReleases(releases)
 
-        // Get all playlists featuring this artist
+        // Get playlists featuring THIS artist by exact name match
         const playlists = allThemedPlaylists.filter((playlist) =>
           playlist.description.toLowerCase().includes(artist.name.toLowerCase()),
         )
@@ -87,25 +132,16 @@ export function ArtistProfile({ slug }: ArtistProfileProps) {
 
         // Fetch Spotify playlists specifically for this artist
         try {
-          // First try to get artist-specific playlists
           const artistResponse = await fetch(`/api/spotify/playlists?artist=${encodeURIComponent(artist.name)}`)
           if (artistResponse.ok) {
             const artistData = await artistResponse.json()
 
-            // If we got artist-specific playlists, use those
             if (artistData && artistData.length > 0) {
               setSpotifyPlaylists(artistData)
-            } else {
-              // Otherwise, fall back to featured playlists
-              const featuredResponse = await fetch(`/api/spotify/playlists/featured`)
-              if (featuredResponse.ok) {
-                const featuredData = await featuredResponse.json()
-                setSpotifyPlaylists(featuredData)
-              }
             }
           }
         } catch (err) {
-          console.error("Error fetching Spotify playlists:", err)
+          console.error(`Error fetching Spotify playlists for ${artist.name}:`, err)
         }
       } catch (err) {
         console.error("Error loading artist content:", err)
@@ -133,25 +169,31 @@ export function ArtistProfile({ slug }: ArtistProfileProps) {
     if (song.external_url) {
       const trackUri = song.external_url.replace("https://open.spotify.com/track/", "spotify:track:")
 
+      console.log(`Attempting to play track: ${trackUri} for song: ${song.title}`)
+
       // Try to play with Spotify API
-      fetch(`/api/spotify/play?uri=${encodeURIComponent(trackUri)}`, {
-        method: "POST",
-      })
-        .then((response) => {
-          if (response.ok) {
+      playTrack(trackUri)
+        .then((success) => {
+          if (success) {
+            console.log(`Successfully playing ${song.title} with Spotify`)
             setCurrentlyPlaying(song.id)
+            toast({
+              title: "Now Playing",
+              description: `${song.title} by ${song.artist}`,
+            })
           } else {
+            console.log(`Failed to play with Spotify, falling back to preview URL for ${song.title}`)
             // Fall back to preview URL if Spotify API fails
             playWithPreviewUrl(song)
           }
         })
         .catch((err) => {
-          console.error("Error playing with Spotify API:", err)
-          // Fall back to preview URL
+          console.error(`Error playing track with Spotify: ${err}`)
           playWithPreviewUrl(song)
         })
     } else {
       // No Spotify URL, use preview URL
+      console.log(`No Spotify URL available for ${song.title}, using preview URL`)
       playWithPreviewUrl(song)
     }
   }
@@ -166,20 +208,21 @@ export function ArtistProfile({ slug }: ArtistProfileProps) {
       }
     }
 
-    // Create new audio element with the sample URL
-    const audioUrl = song.preview_url || sampleAudioUrls[0]
-    console.log("Playing audio with preview URL:", audioUrl)
+    // Create new audio element with the preview URL or sample URL as fallback
+    const audioUrl = song.preview_url || sampleAudioUrls[Math.floor(Math.random() * sampleAudioUrls.length)]
+    console.log(`Playing audio with preview URL: ${audioUrl} for song: ${song.title}`)
 
     const audio = new Audio(audioUrl)
     audioRef.current = audio
 
     // Add event listeners for better user feedback
     audio.addEventListener("ended", () => {
+      console.log(`Playback ended for ${song.title}`)
       setCurrentlyPlaying(null)
     })
 
     audio.addEventListener("error", (e) => {
-      console.error("Audio error:", e)
+      console.error(`Audio error for ${song.title}:`, e)
       setCurrentlyPlaying(null)
     })
 
@@ -187,10 +230,11 @@ export function ArtistProfile({ slug }: ArtistProfileProps) {
     audio
       .play()
       .then(() => {
+        console.log(`Successfully playing ${song.title} with HTML Audio`)
         setCurrentlyPlaying(song.id)
       })
       .catch((err) => {
-        console.error("Error playing audio:", err)
+        console.error(`Error playing audio for ${song.title}:`, err)
         setCurrentlyPlaying(null)
       })
   }

@@ -99,7 +99,7 @@ export function FallbackPlayer({
       audioRef.current.pause()
       if (onPause) onPause()
     }
-  }, [isPlaying, trackUrl, onPlay, onPause])
+  }, [isPlaying, trackUrl, onPlay, onPause, setIsPlaying])
 
   // This component can be used invisibly (just for audio) or with controls
   return <>{error && <div className="text-red-500 text-xs">{error}</div>}</>

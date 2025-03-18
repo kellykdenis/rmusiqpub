@@ -1,28 +1,36 @@
-const CLIENT_ID = "ef6b52550fc64ba2a4ad92a221911fa7"
-const CLIENT_SECRET = "9ed118dd4b41400eb647a41678a15312"
+// Use environment variables with fallbacks
+const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID || process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID || ""
+const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET || ""
 
-// Update redirect URI to use the current host
-const REDIRECT_URI = process.env.NODE_ENV === "production"
-  ? "https://rmusiqpub-sklj3u.vercel.app/api/spotify/callback"
-  : "http://localhost:3000/api/spotify/callback"
-
-// Scopes needed for track previews
-const SCOPES = [
-  "user-read-playback-state",
-  "user-modify-playback-state",
-  "user-read-email",
-  "user-read-private",
-].join(" ")
-
-// Individual artist IDs - include all artists to show all releases
+// Artist IDs from the provided list
 const ARTIST_IDS = [
   "53u06LkxIUGXSn3fCbwfau", // Bebe Cool
-  "3I0DLcc9U3sXwCj5RIu1qF", // Jhenell Dina
   "6x4C5hivCmfL4SIluxGV81", // Phila Kaweesa
+  "3I0DLcc9U3sXwCj5RIu1qF", // Jhenell Dina
   "6JgZGZUxAsUWv8o1hcKHRS", // Carol Bu'dhwike
   "2HhbgMesxeJCkAwSSJ8EBy", // Johnie Beats
   "4H6ZO57SwwBU3EySPa9THB", // Richy Kaweesa
+  "2sJUTjQmuW1hLhLy7dQtPh",
+  "2mToO55cekNJDa4tQx5Ipp",
+  "4AO9uBcZTJbn4EhaZlL8gX",
+  "6OPe0VU4tE6WsIyYZatf1l",
+  "2CzPnR1jSDtjM3ZEiRl3pX",
+  "4jY6R19KcBOgfVoYcFRGmx",
+  "439cAFpgGsd10FGSviU0sF",
+  "74irFmh7k7vfTa2QXwI729",
+  "6d7TH1WmN4YI15WAygkuMR",
+  "6nTXL0DkmSqjvcKjn6hCUz",
+  "0ETh62E8XafPUn9uCQeriQ",
+  "5lkIhrZsXArI4PMzEPr4BU",
+  "4Dvh0aMCIBySKye4a8O2UB",
+  "1tLHxC9BSAUZBtKbK6qdgc",
+  "5A4WNUoNE2OHg8hbn0wzDi",
 ]
+
+// Cache for track data
+const trackCache: Record<string, any> = {}
+const albumTracksCache: Record<string, any[]> = {}
+const artistTopTracksCache: Record<string, any[]> = {}
 
 // Mock playlists to use as fallback if API fails
 export const MOCK_PLAYLISTS = [
@@ -111,11 +119,25 @@ function queueRequest<T>(requestFn: () => Promise<T>): Promise<T> {
   })
 }
 
+// Update the getAccessToken function to better handle errors and use fallbacks
 export async function getAccessToken() {
   try {
     // Check if we have a valid cached token
     if (cachedToken && tokenExpiry && Date.now() < tokenExpiry) {
       return cachedToken
+    }
+
+    // 1. Try using the access token from environment variable first as a reliable fallback
+    if (process.env.SPOTIFY_ACCESS_TOKEN) {
+      console.log("Using access token from environment variable")
+      cachedToken = process.env.SPOTIFY_ACCESS_TOKEN
+      tokenExpiry = Date.now() + 3600 * 1000 // Assume 1 hour validity
+      return cachedToken
+    }
+
+    // 2. If no direct access token, try client credentials flow
+    if (!CLIENT_ID || !CLIENT_SECRET) {
+      throw new Error("Missing Spotify client credentials and no access token available")
     }
 
     const basic = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString("base64")
@@ -141,7 +163,8 @@ export async function getAccessToken() {
     // Handle other non-200 responses
     if (!response.ok) {
       const errorText = await response.text()
-      throw new Error(`Failed to get access token: ${response.status} ${response.statusText} - ${errorText}`)
+      console.error(`Failed to get access token: ${response.status} ${response.statusText} - ${errorText}`)
+      throw new Error(`Failed to get access token: ${response.status} ${errorText}`)
     }
 
     // Only try to parse JSON for successful responses
@@ -154,94 +177,25 @@ export async function getAccessToken() {
     return data.access_token
   } catch (error) {
     console.error("Error getting Spotify access token:", error)
+
+    // If we still have a cached token, use it as a last resort even if it might be expired
+    if (cachedToken) {
+      console.log("Using potentially expired cached token as last resort")
+      return cachedToken
+    }
+
     throw error
   }
 }
 
-// Generate Spotify authorization URL
-export function getSpotifyAuthUrl() {
-  const params = new URLSearchParams({
-    response_type: "code",
-    client_id: CLIENT_ID,
-    scope: SCOPES,
-    redirect_uri: REDIRECT_URI,
-    show_dialog: "true",
-  })
-  const url = `https://accounts.spotify.com/authorize?${params.toString()}`
-  console.log("Generated Spotify auth URL:", url)
-  return url
-}
-
-// Exchange authorization code for access token
-export async function getSpotifyUserToken(code: string) {
-  try {
-    const response = await fetch("https://accounts.spotify.com/api/token", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Authorization: `Basic ${Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString("base64")}`,
-      },
-      body: new URLSearchParams({
-        grant_type: "authorization_code",
-        code,
-        redirect_uri: REDIRECT_URI,
-      }),
-    })
-
-    if (!response.ok) {
-      throw new Error("Failed to get user token")
-    }
-
-    const data = await response.json()
-    return {
-      access_token: data.access_token,
-      refresh_token: data.refresh_token,
-      expires_in: data.expires_in,
-    }
-  } catch (error) {
-    console.error("Error getting user token:", error)
-    throw error
-  }
-}
-
-// Refresh user access token
-export async function refreshSpotifyUserToken(refreshToken: string) {
-  try {
-    const response = await fetch("https://accounts.spotify.com/api/token", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Authorization: `Basic ${Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString("base64")}`,
-      },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: refreshToken,
-      }),
-    })
-
-    if (!response.ok) {
-      throw new Error("Failed to refresh token")
-    }
-
-    const data = await response.json()
-    return {
-      access_token: data.access_token,
-      expires_in: data.expires_in,
-    }
-  } catch (error) {
-    console.error("Error refreshing user token:", error)
-    throw error
-  }
-}
-
-// Update the makeSpotifyRequest function to handle user tokens
-async function makeSpotifyRequest(url: string, userToken?: string, retries = 5) {
+// Function to handle API requests with rate limiting
+async function makeSpotifyRequest(url: string, retries = 5) {
   let attempts = 0
   let lastError: Error | null = null
 
   while (attempts < retries) {
     try {
-      const token = userToken || await getAccessToken()
+      const token = await getAccessToken()
 
       const response = await fetch(url, {
         headers: {
@@ -285,27 +239,102 @@ async function makeSpotifyRequest(url: string, userToken?: string, retries = 5) 
 }
 
 // Queue-based version of makeSpotifyRequest
-async function queuedSpotifyRequest(url: string, userToken?: string, retries = 5) {
-  return queueRequest(() => makeSpotifyRequest(url, userToken, retries))
+async function queuedSpotifyRequest(url: string, retries = 5) {
+  return queueRequest(() => makeSpotifyRequest(url, retries))
 }
 
-export async function getArtistAlbums() {
+// 1. Get all artists data
+export async function getAllArtists() {
+  try {
+    // Split artist IDs into chunks to avoid URL length limits
+    const chunkSize = 20 // Spotify API allows up to 50, but we'll use 20 to be safe
+    const artistChunks = []
+
+    for (let i = 0; i < ARTIST_IDS.length; i += chunkSize) {
+      artistChunks.push(ARTIST_IDS.slice(i, i + chunkSize))
+    }
+
+    const allArtists = []
+
+    for (const chunk of artistChunks) {
+      // Clean up the IDs to ensure they're valid
+      const cleanIds = chunk.map((id) => {
+        // Extract just the ID part if it contains query parameters
+        if (id.includes("?")) {
+          return id.split("?")[0]
+        }
+        return id
+      })
+
+      const artistIds = cleanIds.join(",")
+      console.log(`Fetching artists chunk with IDs: ${artistIds}`)
+
+      const url = `https://api.spotify.com/v1/artists?ids=${artistIds}`
+
+      const response = await queuedSpotifyRequest(url)
+      if (response && response.artists) {
+        // Filter out null artists (which can happen if an ID is invalid)
+        const validArtists = response.artists.filter((artist) => artist !== null)
+        console.log(`Received ${validArtists.length} valid artists from Spotify`)
+        allArtists.push(...validArtists)
+      }
+    }
+
+    console.log(`Total artists fetched: ${allArtists.length}`)
+    return allArtists
+  } catch (error) {
+    console.error("Error fetching all artists:", error)
+    throw error
+  }
+}
+
+// 2. Get artist top tracks
+export async function getArtistTopTracks(artistId: string, market = "UG") {
+  try {
+    // Check cache first
+    if (artistTopTracksCache[artistId]) {
+      console.log(`Using cached top tracks for artist ${artistId}`)
+      return { tracks: artistTopTracksCache[artistId] }
+    }
+
+    console.log(`Fetching top tracks for artist ${artistId}`)
+    const url = `https://api.spotify.com/v1/artists/${artistId}/top-tracks?market=${market}`
+    const data = await queuedSpotifyRequest(url)
+
+    // Store in cache
+    if (data && data.tracks) {
+      artistTopTracksCache[artistId] = data.tracks
+    }
+
+    return data
+  } catch (error) {
+    console.error(`Error fetching top tracks for artist ${artistId}:`, error)
+    return { tracks: [] }
+  }
+}
+
+// Update the getArtistAlbums function to better handle authentication failures
+
+export async function getArtistAlbums(artistId?: string) {
   try {
     console.log("Fetching artist albums individually to avoid rate limits...")
 
     // Process artists one by one to avoid rate limiting
     const allAlbums = []
 
-    for (const artistId of ARTIST_IDS) {
+    // If a specific artist ID is provided, only fetch for that artist
+    const artistsToFetch = artistId ? [artistId] : ARTIST_IDS
+
+    for (const id of artistsToFetch) {
       try {
-        console.log(`Fetching albums for artist ${artistId}...`)
+        console.log(`Fetching albums for artist ${id}...`)
         const data = await queuedSpotifyRequest(
-          `https://api.spotify.com/v1/artists/${artistId}/albums?include_groups=album,single&market=UG&limit=50`,
+          `https://api.spotify.com/v1/artists/${id}/albums?include_groups=album,single&market=UG&limit=50`,
         )
 
         allAlbums.push(...data.items)
       } catch (error) {
-        console.error(`Error fetching albums for artist ${artistId}:`, error)
+        console.error(`Error fetching albums for artist ${id}:`, error)
         // Continue with next artist even if one fails
       }
     }
@@ -316,13 +345,25 @@ export async function getArtistAlbums() {
     return uniqueAlbums
   } catch (error) {
     console.error("Error fetching Spotify albums:", error)
-    throw error
+    // Return empty array instead of throwing to prevent cascading failures
+    return []
   }
 }
 
 export async function getAlbumTracks(albumId: string) {
   try {
-    const data = await queuedSpotifyRequest(`https://api.spotify.com/v1/albums/${albumId}/tracks`)
+    // Check cache first
+    if (albumTracksCache[albumId]) {
+      console.log(`Using cached tracks for album ${albumId}`)
+      return albumTracksCache[albumId]
+    }
+
+    console.log(`Fetching tracks for album ${albumId}`)
+    const data = await queuedSpotifyRequest(`https://api.spotify.com/v1/albums/${albumId}/tracks?limit=50`)
+
+    // Store in cache
+    albumTracksCache[albumId] = data.items
+
     return data.items
   } catch (error) {
     console.error(`Error fetching album tracks for ${albumId}:`, error)
@@ -333,7 +374,18 @@ export async function getAlbumTracks(albumId: string) {
 
 export async function getAlbumDetails(albumId: string) {
   try {
-    return await queuedSpotifyRequest(`https://api.spotify.com/v1/albums/${albumId}`)
+    // Check if the result is cached
+    if (trackCache[albumId]) {
+      console.log(`Returning cached album details for ${albumId}`)
+      return trackCache[albumId]
+    }
+
+    const data = await queuedSpotifyRequest(`https://api.spotify.com/v1/albums/${albumId}`)
+
+    // Cache the result
+    trackCache[albumId] = data
+
+    return data
   } catch (error) {
     console.error(`Error fetching album details for ${albumId}:`, error)
     throw error
@@ -345,24 +397,43 @@ export async function getAllAlbumsWithTracks() {
   try {
     // Get albums
     const albums = await getArtistAlbums()
+
+    // If no albums found, return empty array instead of continuing with processing
+    if (!albums || albums.length === 0) {
+      console.log("No albums found, returning empty array")
+      return []
+    }
+
     console.log(`Fetched ${albums.length} albums, now fetching tracks...`)
 
     // For each album, fetch its tracks
     const albumsWithTracks = []
 
     // Process in smaller batches to avoid overwhelming the API
-    const batchSize = 5
+    const batchSize = 10
     for (let i = 0; i < albums.length; i += batchSize) {
       const batch = albums.slice(i, i + batchSize)
-      console.log(`Processing batch ${i / batchSize + 1} of ${Math.ceil(albums.length / batchSize)}...`)
+      console.log(`Processing batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(albums.length / batchSize)}...`)
 
       const batchPromises = batch.map(async (album) => {
         try {
+          // Check if we already have this album in the cache
+          const cacheKey = `album-${album.id}`
+          if (trackCache[cacheKey]) {
+            console.log(`Using cached data for album ${album.id}`)
+            return trackCache[cacheKey]
+          }
+
           const tracks = await getAlbumTracks(album.id)
-          return {
+          const albumWithTracks = {
             ...album,
             tracks: { items: tracks },
           }
+
+          // Cache the result
+          trackCache[cacheKey] = albumWithTracks
+
+          return albumWithTracks
         } catch (error) {
           console.error(`Error fetching tracks for album ${album.id}:`, error)
           return {
@@ -378,7 +449,7 @@ export async function getAllAlbumsWithTracks() {
       // Add a delay between batches
       if (i + batchSize < albums.length) {
         console.log("Waiting between batches to avoid rate limits...")
-        await new Promise((resolve) => setTimeout(resolve, 2000))
+        await new Promise((resolve) => setTimeout(resolve, 1000))
       }
     }
 
@@ -386,7 +457,8 @@ export async function getAllAlbumsWithTracks() {
     return albumsWithTracks.sort((a, b) => new Date(b.release_date).getTime() - new Date(a.release_date).getTime())
   } catch (error) {
     console.error("Error fetching all albums with tracks:", error)
-    throw error
+    // Return empty array instead of throwing to allow the API to respond gracefully
+    return []
   }
 }
 
@@ -435,7 +507,7 @@ export async function getFeaturedPlaylists() {
     // First try to get actual featured playlists
     try {
       const featuredData = await queuedSpotifyRequest(
-        `https://api.spotify.com/v1/browse/featured-playlists?limit=10`,
+        `https://api.spotify.com/v1/browse/featured-playlists?country=UG&limit=20`,
       )
 
       if (
@@ -463,7 +535,7 @@ export async function getFeaturedPlaylists() {
 
     // If featured playlists fail, try to get new releases
     try {
-      const data = await queuedSpotifyRequest(`https://api.spotify.com/v1/browse/new-releases?limit=10`)
+      const data = await queuedSpotifyRequest(`https://api.spotify.com/v1/browse/new-releases?limit=10&country=UG`)
 
       if (data && data.albums && data.albums.items && data.albums.items.length > 0) {
         console.log(`Successfully fetched ${data.albums.items.length} new releases from Spotify`)
@@ -486,7 +558,7 @@ export async function getFeaturedPlaylists() {
     // If new releases fail, try to get categories
     try {
       const categoriesData = await queuedSpotifyRequest(
-        `https://api.spotify.com/v1/browse/categories?limit=10`,
+        `https://api.spotify.com/v1/browse/categories?limit=10&country=UG`,
       )
 
       if (
@@ -587,7 +659,7 @@ export async function getArtistPlaylists() {
     // Also try to get featured playlists from Spotify
     try {
       const featuredData = await queuedSpotifyRequest(
-        `https://api.spotify.com/v1/browse/featured-playlists?limit=10`,
+        `https://api.spotify.com/v1/browse/featured-playlists?country=UG&limit=10`,
       )
 
       if (featuredData && featuredData.playlists && featuredData.playlists.items) {
@@ -616,3 +688,67 @@ export async function getArtistPlaylists() {
     return MOCK_PLAYLISTS
   }
 }
+
+// Get playlist details including tracks
+export async function getPlaylistDetails(playlistId: string) {
+  try {
+    // Check if the result is cached
+    if (trackCache[playlistId]) {
+      console.log(`Returning cached playlist details for ${playlistId}`)
+      return trackCache[playlistId]
+    }
+
+    const data = await queuedSpotifyRequest(`https://api.spotify.com/v1/playlists/${playlistId}`)
+
+    // Cache the result
+    trackCache[playlistId] = data
+
+    return data
+  } catch (error) {
+    console.error(`Error fetching playlist details for ${playlistId}:`, error)
+    throw error
+  }
+}
+
+// Get playlist tracks
+export async function getPlaylistTracks(playlistId: string) {
+  try {
+    // Check if the result is cached
+    if (albumTracksCache[playlistId]) {
+      console.log(`Returning cached playlist tracks for ${playlistId}`)
+      return albumTracksCache[playlistId]
+    }
+
+    const data = await queuedSpotifyRequest(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`)
+
+    // Cache the result
+    albumTracksCache[playlistId] = data.items
+
+    return data.items
+  } catch (error) {
+    console.error(`Error fetching playlist tracks for ${playlistId}:`, error)
+    return []
+  }
+}
+
+// Get track audio features
+export async function getTrackAudioFeatures(trackId: string) {
+  try {
+    // Check if the result is cached
+    if (trackCache[trackId]) {
+      console.log(`Returning cached audio features for track ${trackId}`)
+      return trackCache[trackId]
+    }
+
+    const data = await queuedSpotifyRequest(`https://api.spotify.com/v1/audio-features/${trackId}`)
+
+    // Cache the result
+    trackCache[trackId] = data
+
+    return data
+  } catch (error) {
+    console.error(`Error fetching audio features for track ${trackId}:`, error)
+    return null
+  }
+}
+
