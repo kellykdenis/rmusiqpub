@@ -28,9 +28,10 @@ const ARTIST_IDS = [
 ]
 
 // Cache for track data
+// Cache for track data
 const trackCache: Record<string, any> = {}
 const albumTracksCache: Record<string, any[]> = {}
-const artistTopTracksCache: Record<string, any[]> = {}
+let artistTopTracksCache: Record<string, any[]> = {}
 
 // Mock playlists to use as fallback if API fails
 export const MOCK_PLAYLISTS = [
@@ -246,41 +247,57 @@ async function queuedSpotifyRequest(url: string, retries = 5) {
 // 1. Get all artists data
 export async function getAllArtists() {
   try {
+    console.log("Starting to fetch all artists...")
+    
+    // Clean up artist IDs to remove any query parameters
+    const cleanArtistIds = ARTIST_IDS.map(id => {
+      if (id.includes("?")) {
+        return id.split("?")[0]
+      }
+      return id
+    })
+
     // Split artist IDs into chunks to avoid URL length limits
     const chunkSize = 20 // Spotify API allows up to 50, but we'll use 20 to be safe
     const artistChunks = []
 
-    for (let i = 0; i < ARTIST_IDS.length; i += chunkSize) {
-      artistChunks.push(ARTIST_IDS.slice(i, i + chunkSize))
+    for (let i = 0; i < cleanArtistIds.length; i += chunkSize) {
+      artistChunks.push(cleanArtistIds.slice(i, i + chunkSize))
     }
 
     const allArtists = []
+    const errors = []
 
     for (const chunk of artistChunks) {
-      // Clean up the IDs to ensure they're valid
-      const cleanIds = chunk.map((id) => {
-        // Extract just the ID part if it contains query parameters
-        if (id.includes("?")) {
-          return id.split("?")[0]
+      try {
+        const artistIds = chunk.join(",")
+        console.log(`Fetching artists chunk with IDs: ${artistIds}`)
+
+        const url = `https://api.spotify.com/v1/artists?ids=${artistIds}`
+        const response = await queuedSpotifyRequest(url)
+
+        if (response && response.artists) {
+          // Filter out null artists and add to results
+          const validArtists = response.artists.filter((artist: any) => artist !== null)
+          console.log(`Received ${validArtists.length} valid artists from Spotify`)
+          allArtists.push(...validArtists)
         }
-        return id
-      })
 
-      const artistIds = cleanIds.join(",")
-      console.log(`Fetching artists chunk with IDs: ${artistIds}`)
-
-      const url = `https://api.spotify.com/v1/artists?ids=${artistIds}`
-
-      const response = await queuedSpotifyRequest(url)
-      if (response && response.artists) {
-        // Filter out null artists (which can happen if an ID is invalid)
-        const validArtists = response.artists.filter((artist) => artist !== null)
-        console.log(`Received ${validArtists.length} valid artists from Spotify`)
-        allArtists.push(...validArtists)
+        // Add a small delay between chunks to avoid rate limiting
+        if (artistChunks.indexOf(chunk) < artistChunks.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 100))
+        }
+      } catch (error) {
+        console.error(`Error fetching artist chunk:`, error)
+        errors.push(error)
       }
     }
 
     console.log(`Total artists fetched: ${allArtists.length}`)
+    if (allArtists.length === 0 && errors.length > 0) {
+      throw new Error(`Failed to fetch any artists: ${errors.map((e: unknown) => e instanceof Error ? e.message : String(e)).join(", ")}`)
+    }
+
     return allArtists
   } catch (error) {
     console.error("Error fetching all artists:", error)
@@ -288,24 +305,45 @@ export async function getAllArtists() {
   }
 }
 
-// 2. Get artist top tracks
+// Add a new function to get artist details with caching
+const artistCache: Record<string, any> = {}
+
+export async function getArtistDetails(artistId: string) {
+  try {
+    // Check cache first
+    if (artistCache[artistId]) {
+      console.log(`Using cached data for artist ${artistId}`)
+      return artistCache[artistId]
+    }
+
+    const url = `https://api.spotify.com/v1/artists/${artistId}`
+    const data = await queuedSpotifyRequest(url)
+    
+    // Cache the result
+    artistCache[artistId] = data
+    
+    return data
+  } catch (error) {
+    console.error(`Error fetching artist details for ${artistId}:`, error)
+    throw error
+  }
+}
+
+// Add a new function to get artist top tracks with caching
 export async function getArtistTopTracks(artistId: string, market = "UG") {
   try {
     // Check cache first
     if (artistTopTracksCache[artistId]) {
       console.log(`Using cached top tracks for artist ${artistId}`)
-      return { tracks: artistTopTracksCache[artistId] }
+      return artistTopTracksCache[artistId]
     }
 
-    console.log(`Fetching top tracks for artist ${artistId}`)
     const url = `https://api.spotify.com/v1/artists/${artistId}/top-tracks?market=${market}`
     const data = await queuedSpotifyRequest(url)
-
-    // Store in cache
-    if (data && data.tracks) {
-      artistTopTracksCache[artistId] = data.tracks
-    }
-
+    
+    // Cache the result
+    artistTopTracksCache[artistId] = data
+    
     return data
   } catch (error) {
     console.error(`Error fetching top tracks for artist ${artistId}:`, error)
@@ -313,40 +351,27 @@ export async function getArtistTopTracks(artistId: string, market = "UG") {
   }
 }
 
-// Update the getArtistAlbums function to better handle authentication failures
+// Add a new function to get artist albums with caching
+const artistAlbumsCache: Record<string, any> = {}
 
-export async function getArtistAlbums(artistId?: string) {
+export async function getArtistAlbums(artistId: string) {
   try {
-    console.log("Fetching artist albums individually to avoid rate limits...")
-
-    // Process artists one by one to avoid rate limiting
-    const allAlbums = []
-
-    // If a specific artist ID is provided, only fetch for that artist
-    const artistsToFetch = artistId ? [artistId] : ARTIST_IDS
-
-    for (const id of artistsToFetch) {
-      try {
-        console.log(`Fetching albums for artist ${id}...`)
-        const data = await queuedSpotifyRequest(
-          `https://api.spotify.com/v1/artists/${id}/albums?include_groups=album,single&market=UG&limit=50`,
-        )
-
-        allAlbums.push(...data.items)
-      } catch (error) {
-        console.error(`Error fetching albums for artist ${id}:`, error)
-        // Continue with next artist even if one fails
-      }
+    // Check cache first
+    if (artistAlbumsCache[artistId]) {
+      console.log(`Using cached albums for artist ${artistId}`)
+      return artistAlbumsCache[artistId]
     }
 
-    // Remove duplicates based on album name
-    const uniqueAlbums = Array.from(new Map(allAlbums.map((album) => [album.name, album])).values())
-
-    return uniqueAlbums
+    const url = `https://api.spotify.com/v1/artists/${artistId}/albums?include_groups=album,single&market=UG&limit=50`
+    const data = await queuedSpotifyRequest(url)
+    
+    // Cache the result
+    artistAlbumsCache[artistId] = data
+    
+    return data
   } catch (error) {
-    console.error("Error fetching Spotify albums:", error)
-    // Return empty array instead of throwing to prevent cascading failures
-    return []
+    console.error(`Error fetching albums for artist ${artistId}:`, error)
+    return { items: [] }
   }
 }
 
@@ -415,7 +440,7 @@ export async function getAllAlbumsWithTracks() {
       const batch = albums.slice(i, i + batchSize)
       console.log(`Processing batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(albums.length / batchSize)}...`)
 
-      const batchPromises = batch.map(async (album) => {
+      const batchPromises = batch.map(async (album: any) => {
         try {
           // Check if we already have this album in the cache
           const cacheKey = `album-${album.id}`
@@ -465,7 +490,7 @@ export async function getAllAlbumsWithTracks() {
 // Function to get a limited set of albums with tracks for testing
 export async function getLimitedAlbumsWithTracks(limit = 10) {
   try {
-    const albums = await getArtistAlbums()
+    const albums = await getArtistAlbums('6H1RjVyNruCmrBEWRbD0VZ') // Add artist ID parameter
     console.log(`Fetched ${albums.length} albums, limiting to ${limit} for testing...`)
 
     // Take only the first few albums to avoid rate limits during testing
