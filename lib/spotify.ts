@@ -266,12 +266,13 @@ export async function getAllArtists() {
     }
 
     const allArtists = []
-    const errors = []
+    const errors: Error[] = []
 
-    for (const chunk of artistChunks) {
+    // Process chunks in parallel with rate limiting
+    const chunkPromises = artistChunks.map(async (chunk, index) => {
       try {
         const artistIds = chunk.join(",")
-        console.log(`Fetching artists chunk with IDs: ${artistIds}`)
+        console.log(`Fetching artists chunk ${index + 1}/${artistChunks.length} with IDs: ${artistIds}`)
 
         const url = `https://api.spotify.com/v1/artists?ids=${artistIds}`
         const response = await queuedSpotifyRequest(url)
@@ -279,23 +280,25 @@ export async function getAllArtists() {
         if (response && response.artists) {
           // Filter out null artists and add to results
           const validArtists = response.artists.filter((artist: any) => artist !== null)
-          console.log(`Received ${validArtists.length} valid artists from Spotify`)
-          allArtists.push(...validArtists)
+          console.log(`Received ${validArtists.length} valid artists from chunk ${index + 1}`)
+          return validArtists
         }
-
-        // Add a small delay between chunks to avoid rate limiting
-        if (artistChunks.indexOf(chunk) < artistChunks.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 100))
-        }
+        return []
       } catch (error) {
-        console.error(`Error fetching artist chunk:`, error)
-        errors.push(error)
+        console.error(`Error fetching artist chunk ${index + 1}:`, error)
+        errors.push(error instanceof Error ? error : new Error(String(error)))
+        return []
       }
-    }
+    })
+
+    // Wait for all chunks to complete
+    const chunkResults = await Promise.all(chunkPromises)
+    allArtists.push(...chunkResults.flat())
 
     console.log(`Total artists fetched: ${allArtists.length}`)
+    
     if (allArtists.length === 0 && errors.length > 0) {
-      throw new Error(`Failed to fetch any artists: ${errors.map((e: unknown) => e instanceof Error ? e.message : String(e)).join(", ")}`)
+      throw new Error(`Failed to fetch any artists: ${errors.map(e => e.message).join(", ")}`)
     }
 
     return allArtists
@@ -421,10 +424,11 @@ export async function getAlbumDetails(albumId: string) {
 export async function getAllAlbumsWithTracks() {
   try {
     // Get albums
-    const albums = await getArtistAlbums()
+    const albums = await Promise.all(ARTIST_IDS.map(id => getArtistAlbums(id)))
+    const allAlbums = albums.flat()
 
     // If no albums found, return empty array instead of continuing with processing
-    if (!albums || albums.length === 0) {
+    if (!allAlbums || allAlbums.length === 0) {
       console.log("No albums found, returning empty array")
       return []
     }

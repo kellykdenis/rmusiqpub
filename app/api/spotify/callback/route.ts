@@ -17,22 +17,20 @@ export async function GET(request: Request) {
       console.error("No code received from Spotify");
       return NextResponse.redirect(new URL("/?error=no_code", request.url));
     }
-
-    // Ensure getAccessToken accepts 'code'
-    const tokenData = await getAccessToken(code); // Fix: Pass code directly
+    // Get access token
+    const tokenData = await getAccessToken();
 
     // Create response with redirect
     const response = NextResponse.redirect(new URL("/", request.url));
-
     // Set cookies in the response
-    cookies().set("spotify_access_token", tokenData.access_token, {
+    response.cookies.set("spotify_access_token", tokenData.access_token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       maxAge: tokenData.expires_in,
     });
 
-    cookies().set("spotify_refresh_token", tokenData.refresh_token, {
+    response.cookies.set("spotify_refresh_token", tokenData.refresh_token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
