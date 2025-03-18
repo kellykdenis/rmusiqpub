@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import Image from "next/image"
 import Link from "next/link"
-import { TrackPreview } from "./track-preview"
+import { Skeleton } from "@/components/ui/skeleton"
 
 interface SpotifyArtist {
   id: string
@@ -249,29 +249,124 @@ const initialArtists: Artist[] = [
 ]
 
 export function ArtistsGrid() {
-  const [artists, setArtists] = useState<Artist[]>([])
+  const [artists, setArtists] = useState<Artist[]>(initialArtists)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [selectedArtist, setSelectedArtist] = useState<Artist | null>(null)
-  const [topTracks, setTopTracks] = useState<any[]>([])
 
   useEffect(() => {
     async function fetchArtists() {
       try {
         setLoading(true)
-        setError(null)
         const response = await fetch("/api/spotify/artists")
-        
+
         if (!response.ok) {
-          const errorData = await response.json()
-          throw new Error(errorData.details || "Failed to fetch artists")
+          throw new Error(`Failed to fetch artists: ${response.status}`)
         }
 
         const data = await response.json()
-        setArtists(data)
+
+        // Merge Spotify data with our existing artist data
+        if (data && Array.isArray(data)) {
+          // Create a map of our existing artists by Spotify ID for quick lookup
+          const existingArtistsMap = initialArtists.reduce(
+            (map, artist) => {
+              if (artist.spotifyId) {
+                map[artist.spotifyId] = artist
+              }
+              return map
+            },
+            {} as Record<string, Artist>,
+          )
+
+          // Create a map of existing artists by slug for quick lookup
+          const existingArtistsBySlug = initialArtists.reduce(
+            (map, artist) => {
+              map[artist.slug] = artist
+              return map
+            },
+            {} as Record<string, Artist>,
+          )
+
+          // Process all artists from Spotify API
+          const updatedArtists: Artist[] = []
+
+          // First add our existing artists that match Spotify IDs
+          data.forEach((spotifyArtist: SpotifyArtist) => {
+            const existingArtist = existingArtistsMap[spotifyArtist.id]
+
+            if (existingArtist) {
+              // Update with Spotify data but preserve existing data
+              updatedArtists.push({
+                ...existingArtist,
+                name: spotifyArtist.name,
+                image: spotifyArtist.images[0]?.url || existingArtist.image,
+                spotifyUrl: spotifyArtist.external_urls.spotify,
+                socials: {
+                  ...existingArtist.socials,
+                  spotify: spotifyArtist.external_urls.spotify,
+                },
+              })
+              // Remove from map to track which ones we've processed
+              delete existingArtistsMap[spotifyArtist.id]
+            } else {
+              // Add new artist from Spotify
+              const slug = artistIdToSlugMap[spotifyArtist.id] || `spotify-${spotifyArtist.id}`
+
+              // Check if we already have an artist with this slug
+              if (existingArtistsBySlug[slug]) {
+                // Update the existing artist
+                const existingBySlug = existingArtistsBySlug[slug]
+                updatedArtists.push({
+                  ...existingBySlug,
+                  name: spotifyArtist.name,
+                  image: spotifyArtist.images[0]?.url || existingBySlug.image,
+                  spotifyId: spotifyArtist.id,
+                  spotifyUrl: spotifyArtist.external_urls.spotify,
+                  socials: {
+                    ...existingBySlug.socials,
+                    spotify: spotifyArtist.external_urls.spotify,
+                  },
+                })
+              } else {
+                // Create a completely new artist
+                updatedArtists.push({
+                  id: `spotify-${spotifyArtist.id}`,
+                  name: spotifyArtist.name,
+                  image: spotifyArtist.images[0]?.url || "/placeholder.svg",
+                  slug: slug,
+                  website: spotifyArtist.external_urls.spotify,
+                  featuredVideoId: "dQw4w9WgXcQ",
+                  spotifyId: spotifyArtist.id,
+                  spotifyUrl: spotifyArtist.external_urls.spotify,
+                  socials: {
+                    spotify: spotifyArtist.external_urls.spotify,
+                    instagram: `https://instagram.com/${spotifyArtist.name.replace(/\s+/g, "")}`,
+                    youtube: `https://youtube.com/@${spotifyArtist.name.replace(/\s+/g, "")}`,
+                    facebook: `https://facebook.com/${spotifyArtist.name.replace(/\s+/g, "")}`,
+                    twitter: `https://twitter.com/${spotifyArtist.name.replace(/\s+/g, "")}`,
+                  },
+                  releases: [],
+                })
+              }
+            }
+          })
+
+          // Add any remaining existing artists that weren't in the Spotify response
+          Object.values(existingArtistsMap).forEach((artist) => {
+            updatedArtists.push(artist)
+          })
+
+          // Update the global artists array for other components to use
+          artists.length = 0
+          artists.push(...updatedArtists)
+
+          setArtists(updatedArtists)
+          console.log(`Loaded ${updatedArtists.length} artists from Spotify`)
+        }
       } catch (err) {
         console.error("Error fetching artists:", err)
-        setError(err instanceof Error ? err.message : "Failed to fetch artists")
+        setError(err instanceof Error ? err.message : "An error occurred")
+        // Keep using initial artists data on error
       } finally {
         setLoading(false)
       }
@@ -280,100 +375,39 @@ export function ArtistsGrid() {
     fetchArtists()
   }, [])
 
-  useEffect(() => {
-    async function fetchTopTracks() {
-      if (!selectedArtist) return
-
-      try {
-        const response = await fetch(`/api/spotify/artists/${selectedArtist.id}/top-tracks`)
-        if (!response.ok) throw new Error("Failed to fetch top tracks")
-        
-        const data = await response.json()
-        setTopTracks(data.tracks || [])
-      } catch (err) {
-        console.error("Error fetching top tracks:", err)
-      }
-    }
-
-    fetchTopTracks()
-  }, [selectedArtist])
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-gray-900"></div>
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] p-4 text-center">
-        <p className="text-red-500 mb-4">{error}</p>
-        <button
-          onClick={() => window.location.reload()}
-          className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
-        >
-          Try Again
-        </button>
-      </div>
-    )
-  }
-
   return (
-    <div className="space-y-8">
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-        {artists.map((artist) => (
-          <div
-            key={artist.id}
-            className="group relative bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow"
-            onClick={() => setSelectedArtist(artist)}
-          >
-            <div className="aspect-square relative">
-              <Image
-                src={artist.image || "/placeholder.svg"}
-                alt={artist.name}
-                fill
-                className="object-cover"
-                sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-              />
-            </div>
-            <div className="p-4">
-              <h3 className="font-semibold text-lg truncate">{artist.name}</h3>
-              <p className="text-sm text-gray-600">
-                {artist.releases[0]?.title || "No releases found"}
-              </p>
-            </div>
-          </div>
-        ))}
+    <div className="max-w-[1180px] mx-auto px-4 py-8">
+      <div className="flex justify-between items-center mb-8">
+        <h1 className="text-3xl font-bold">Artists & Writers</h1>
       </div>
 
-      {selectedArtist && (
-        <div className="mt-8">
-          <h2 className="text-2xl font-bold mb-4">{selectedArtist.name}'s Top Tracks</h2>
-          <div className="space-y-4">
-            {topTracks.map((track) => (
-              <div
-                key={track.id}
-                className="flex items-center justify-between p-4 bg-white rounded-lg shadow"
-              >
-                <div className="flex items-center space-x-4">
-                  <Image
-                    src={track.album.images[0]?.url || "/placeholder.svg"}
-                    alt={track.name}
-                    width={48}
-                    height={48}
-                    className="rounded"
-                  />
-                  <div>
-                    <h3 className="font-medium">{track.name}</h3>
-                    <p className="text-sm text-gray-600">{track.album.name}</p>
-                  </div>
-                </div>
-                <TrackPreview previewUrl={track.preview_url} trackName={track.name} />
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+        {loading
+          ? // Show skeletons while loading
+            Array.from({ length: 8 }).map((_, index) => (
+              <div key={index} className="flex flex-col gap-2">
+                <Skeleton className="aspect-[4/3] w-full rounded-lg" />
+                <Skeleton className="h-6 w-3/4" />
               </div>
+            ))
+          : artists.map((artist) => (
+              <Link key={artist.slug} href={`/artists-writers/${artist.slug}`} className="group block">
+                <div className="relative aspect-[4/3] overflow-hidden rounded-lg mb-2">
+                  <Image
+                    src={artist.image || "/placeholder.svg"}
+                    alt={artist.name}
+                    fill
+                    className="object-cover transition-transform group-hover:scale-105"
+                  />
+                </div>
+                <h2 className="text-lg font-medium group-hover:text-[#F50604]">{artist.name}</h2>
+              </Link>
             ))}
-          </div>
+      </div>
+
+      {error && (
+        <div className="mt-4 p-4 bg-red-50 text-red-600 rounded-md">
+          Error loading artists from Spotify: {error}. Showing local data instead.
         </div>
       )}
     </div>
